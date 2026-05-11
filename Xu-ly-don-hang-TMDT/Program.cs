@@ -6,13 +6,13 @@ using System.Text;
 
 namespace ECommerceApp
 {
-    #region 1. INTERFACES
+    #region 1. INTERFACES (STRATEGY & DECORATOR)
     public interface IShippingStrategy { double CalculateShipping(Order order); string GetStrategyName(); }
     public interface IPaymentStrategy { bool Pay(double amount); string GetMethodName(); }
     public interface IDiscount { double ApplyDiscount(double price); string GetDescription(); }
     #endregion
 
-    #region 2. CORE OOP & ĐA HÌNH
+    #region 2. CORE OOP & POLYMORPHISM (ĐA HÌNH)
     public abstract class Item
     {
         public int Id { get; set; }
@@ -29,7 +29,7 @@ namespace ECommerceApp
     public class BulkyItem : Item { public BulkyItem(int id, string name, double price, int stock) : base(id, name, price, stock) { } public override double GetExtraFee() => 50000 * Quantity; }
     #endregion
 
-    #region 3. DESIGN PATTERNS
+    #region 3. DESIGN PATTERNS IMPLEMENTATION
     public class StandardShipping : IShippingStrategy { public double CalculateShipping(Order o) => 30000; public string GetStrategyName() => "Tiêu chuẩn (30k)"; }
     public class ExpressShipping : IShippingStrategy { public double CalculateShipping(Order o) => 60000; public string GetStrategyName() => "Hỏa tốc (60k)"; }
     public class CODPayment : IPaymentStrategy { public bool Pay(double a) => true; public string GetMethodName() => "Tiền mặt (COD)"; }
@@ -52,7 +52,7 @@ namespace ECommerceApp
     }
     #endregion
 
-    #region 4. ORDER & FILE I/O
+    #region 4. ORDER & DATA PERSISTENCE (LƯU TRỮ)
     public class Order
     {
         public List<Item> Items { get; set; } = new List<Item>();
@@ -65,16 +65,15 @@ namespace ECommerceApp
         public double GetShippingFee() => Shipping.CalculateShipping(this);
         public double GetFinalTotal() => DiscountProcessor.ApplyDiscount(GetSubTotal() + GetShippingFee());
 
-        // Hợp nhất hàm hiển thị vào đây để tránh lỗi CS1061/CS0103
-        public string GetDraftSummary()
+        // Dùng hàm chung để in cả Draft và Hóa đơn lịch sử
+        public string GetSummary(string title)
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("\n========= TRẠNG THÁI ĐƠN HÀNG =========");
-            if (Items.Count == 0) sb.AppendLine("(Giỏ hàng đang trống)");
+            sb.AppendLine($"\n========= {title} =========");
+            if (Items.Count == 0) sb.AppendLine("(Trống)");
             else
             {
                 sb.AppendLine(string.Format("{0,-20} | {1,-3} | {2,12}", "Tên sản phẩm", "SL", "Thành tiền"));
-                sb.AppendLine("------------------------------------------");
                 foreach (var i in Items)
                     sb.AppendLine(string.Format("{0,-20} | {1,-3} | {2,12:N0}đ", i.Name, i.Quantity, i.GetSubTotal() + i.GetExtraFee()));
             }
@@ -82,35 +81,32 @@ namespace ECommerceApp
             sb.AppendLine(string.Format("{0,-28} : {1,10:N0}đ", "Tổng tiền hàng", GetSubTotal()));
             sb.AppendLine(string.Format("{0,-28} : {1,10:N0}đ", "Phí ship (" + Shipping.GetStrategyName() + ")", GetShippingFee()));
             sb.AppendLine(string.Format("{0,-28} : {1}", "Ưu đãi", DiscountProcessor.GetDescription()));
-            sb.AppendLine("------------------------------------------");
             sb.AppendLine(string.Format("{0,-28} : {1,10:N0}đ", "TỔNG THANH TOÁN", GetFinalTotal()));
-            sb.AppendLine(string.Format("{0,-28} : {1}", "Thanh toán bằng", Payment.GetMethodName()));
-            sb.AppendLine("==========================================");
+            sb.AppendLine(string.Format("{0,-28} : {1}", "Thanh toán", Payment.GetMethodName()));
+            sb.AppendLine($"Thời gian: {DateTime.Now:dd/MM/yyyy HH:mm:ss}");
+            sb.AppendLine("==========================================\n");
             return sb.ToString();
-        }
-
-        public void ExportInvoice()
-        {
-            string fileName = $"Invoice_{DateTime.Now:yyyyMMddHHmm}.txt";
-            File.WriteAllText(fileName, GetDraftSummary(), Encoding.UTF8);
-            Console.WriteLine($"\n[Thành công] Hóa đơn đã lưu tại: {fileName}");
         }
     }
 
     public static class Database
     {
-        private const string Path = "Products.csv";
+        private const string ProdFile = "Products.csv";
+        private const string HistoryFile = "OrderHistory.txt";
+
         public static void Initialize()
         {
-            if (!File.Exists(Path) || File.ReadAllLines(Path).FirstOrDefault()?.Split(',').Length < 5)
+            if (!File.Exists(ProdFile) || File.ReadAllLines(ProdFile).FirstOrDefault()?.Split(',').Length < 5)
             {
-                File.WriteAllText(Path, "id,name,price,type,stock\n1,Binh hoa thuy tinh,150000,FRAGILE,50\n2,Tu go,2500000,BULKY,10\n3,Ao thun LHU,200000,NORMAL,100", Encoding.UTF8);
+                File.WriteAllText(ProdFile, "id,name,price,type,stock\n1,Binh hoa thuy tinh,150000,FRAGILE,50\n2,Tu go,2500000,BULKY,10\n3,Ao thun LHU,200000,NORMAL,100", Encoding.UTF8);
             }
+            if (!File.Exists(HistoryFile)) File.WriteAllText(HistoryFile, "--- LỊCH SỬ GIAO DỊCH ---\n", Encoding.UTF8);
         }
+
         public static List<Item> Load()
         {
             var list = new List<Item>();
-            foreach (var l in File.ReadAllLines(Path).Skip(1))
+            foreach (var l in File.ReadAllLines(ProdFile).Skip(1))
             {
                 var p = l.Split(','); if (p.Length < 5) continue;
                 int id = int.Parse(p[0]); double pr = double.Parse(p[2]); string t = p[3].ToUpper(); int s = int.Parse(p[4]);
@@ -120,16 +116,20 @@ namespace ECommerceApp
             }
             return list;
         }
-        public static void Save(List<Item> inv)
+
+        public static void SaveStock(List<Item> inv)
         {
             StringBuilder sb = new StringBuilder("id,name,price,type,stock\n");
             foreach (var i in inv) sb.AppendLine($"{i.Id},{i.Name},{i.Price},{(i is FragileItem ? "FRAGILE" : i is BulkyItem ? "BULKY" : "NORMAL")},{i.Stock}");
-            File.WriteAllText(Path, sb.ToString(), Encoding.UTF8);
+            File.WriteAllText(ProdFile, sb.ToString(), Encoding.UTF8);
         }
+
+        public static void AppendHistory(string summary) => File.AppendAllText(HistoryFile, summary, Encoding.UTF8);
+        public static string GetHistory() => File.Exists(HistoryFile) ? File.ReadAllText(HistoryFile) : "Chưa có lịch sử giao dịch.";
     }
     #endregion
 
-    #region 5. PROGRAM MAIN
+    #region 5. PROGRAM MAIN (UX & UI)
     class Program
     {
         static List<Item> inventory = new List<Item>();
@@ -144,14 +144,14 @@ namespace ECommerceApp
             while (isRunning)
             {
                 Console.Clear();
-                Console.WriteLine(currentOrder.GetDraftSummary()); // Tự động hiện Draft
-
-                Console.WriteLine("======= MENU CỬA HÀNG =======");
-                Console.WriteLine("1. Thêm hàng vào giỏ ");
-                Console.WriteLine("2. Đổi đơn vị vận chuyển");
-                Console.WriteLine("3. Đổi phương thức thanh toán");
-                Console.WriteLine("4. Áp dụng mã giảm giá");
-                Console.WriteLine("5. Chốt đơn & Xuất hóa đơn");
+                Console.WriteLine(currentOrder.GetSummary("TRẠNG THÁI GIỎ HÀNG"));
+                Console.WriteLine("======= HỆ THỐNG CỬA HÀNG =======");
+                Console.WriteLine("1. Mua hàng");
+                Console.WriteLine("2. Đổi Vận chuyển" );
+                Console.WriteLine(" 3. Đổi Thanh toán");
+                Console.WriteLine("4. Áp dụng Giảm giá đa tầng");
+                Console.WriteLine("5. Thanh toán & Xuất hóa đơn");
+                Console.WriteLine("6. Xem lịch sử đơn hàng");
                 Console.WriteLine("0. Thoát");
                 Console.Write("\nChọn: ");
 
@@ -165,6 +165,7 @@ namespace ECommerceApp
                         case "3": SetPayment(); break;
                         case "4": SetDiscount(); break;
                         case "5": Checkout(); break;
+                        case "6": ShowHistory(); break;
                         case "0": isRunning = false; break;
                     }
                 }
@@ -177,33 +178,29 @@ namespace ECommerceApp
             while (true)
             {
                 Console.Clear();
-                Console.WriteLine(currentOrder.GetDraftSummary());
-                Console.WriteLine("--- DANH SÁCH KHO ---");
+                Console.WriteLine(currentOrder.GetSummary("GIỎ HÀNG TẠM TÍNH"));
                 foreach (var p in inventory) Console.WriteLine($"{p.Id}. {p.Name} | {p.Price:N0}đ (Kho: {p.Stock})");
-
-                Console.Write("\nNhập ID muốn mua (hoặc 'n' để về Menu): ");
+                Console.Write("\nNhập ID muốn mua (hoặc 'n' để quay lại): ");
                 string input = Console.ReadLine();
                 if (input.ToLower() == "n") break;
-
                 if (int.TryParse(input, out int id))
                 {
                     var prod = inventory.Find(x => x.Id == id);
                     if (prod != null)
                     {
-                        Console.Write($"Nhập SL cho {prod.Name}: ");
+                        Console.Write($"SL cho {prod.Name}: ");
                         if (int.TryParse(Console.ReadLine(), out int q) && q > 0 && q <= prod.Stock)
                         {
                             prod.Stock -= q;
-                            // Tạo clone để đưa vào giỏ
                             var cartItem = (Item)Activator.CreateInstance(prod.GetType(), prod.Id, prod.Name, prod.Price, prod.Stock);
                             cartItem.Quantity = q;
                             currentOrder.AddItem(cartItem);
                         }
-                        else Console.WriteLine("Tồn kho không đủ");
+                        else Console.WriteLine("SL không hợp lệ!");
                     }
                     else Console.WriteLine("ID sai!");
                 }
-                System.Threading.Thread.Sleep(500);
+                System.Threading.Thread.Sleep(400);
             }
         }
 
@@ -231,10 +228,24 @@ namespace ECommerceApp
         static void Checkout()
         {
             if (currentOrder.Items.Count == 0) throw new Exception("Giỏ hàng trống!");
-            currentOrder.ExportInvoice();
-            Database.Save(inventory);
+            string summary = currentOrder.GetSummary("HÓA ĐƠN THANH TOÁN");
+
+            // Lưu lịch sử và xuất file hóa đơn riêng lẻ
+            Database.AppendHistory(summary);
+            File.WriteAllText($"Invoice_{DateTime.Now:yyyyMMddHHmm}.txt", summary, Encoding.UTF8);
+
+            Database.SaveStock(inventory);
             currentOrder = new Order();
-            Console.WriteLine("Nhấn phím bất kỳ để tiếp tục...");
+            Console.WriteLine("\nThanh toán thành công! Hóa đơn đã được lưu vào lịch sử.");
+            Console.ReadKey();
+        }
+
+        static void ShowHistory()
+        {
+            Console.Clear();
+            Console.WriteLine("======= LỊCH SỬ GIAO DỊCH =======");
+            Console.WriteLine(Database.GetHistory());
+            Console.WriteLine("Nhấn phím bất kỳ để quay lại...");
             Console.ReadKey();
         }
     }
